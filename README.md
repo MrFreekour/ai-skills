@@ -1,16 +1,24 @@
 # ai-skills
 
-Public repo of agent skills I've built for Claude Code that are useful beyond my own setup.
+**The shared brain your team needs, without the setup tax.**
 
-Currently shipping:
+AI sessions get smarter when they can read your team's actual structure — your products, your customers, your conventions, your decisions. Most teams don't have that organized in a way AI can use, so every session starts with the same context tax: re-explain who's who, what we ship, what we already decided.
 
-- [`team-os-setup/`](team-os-setup/) — Bootstrap a Team OS for your company in ~25 minutes. Modeled on [Hannah Stulberg's Team OS framework](https://github.com/in-the-weeds-hannah-stulberg/team-os-example-repo). Reads your existing folders + GitHub repos, asks ~20 questions across 4 stages (research → propose → advanced → execute), and builds a Level 1 environment in a sibling directory. Auto-commits at every stage so `git checkout main` reverts everything.
+[Hannah Stulberg's Team OS](https://github.com/in-the-weeds-hannah-stulberg/team-os-example-repo) is the framework that fixes it — hierarchical CLAUDE.md files plus cross-functional indexes that turn your team's collective context into something AI can self-serve. New hires onboard against the same files Claude does. When someone fixes a misunderstanding once, every future session benefits.
 
-- [`_doctrine/output-routing.md`](_doctrine/output-routing.md) — Companion doctrine: how PMOS / product-os skills should follow `CLAUDE.md` routing rules when saving artifacts.
+This repo ships **`/team-os-setup`** — a Claude Code skill that walks you through standing one up. About 25 minutes, four stages, and you have a personalized Team OS modeled on Hannah's framework, ready to live alongside (or inside) your existing repo. Built for the person who just found Team OS and wants to try it without committing their whole filesystem on day one.
+
+## Choose your approach
+
+Build progressively. Start safely, deepen as the structure earns your trust:
+
+- **L1 — pointers (start here).** Builds a new sibling folder with CLAUDE.md files that *point* at your existing docs. Nothing moves, nothing copies. Don't like the result? `git checkout main` and it's gone. This is how you test the skill without disturbing what's already working.
+- **L2 — copy.** Once L1 feels right, clone source files into the L1 slots so it has working copies. Originals stay where they are. The L1 becomes your AI-facing front door while the rest of your filesystem keeps working as you remember it.
+- **L3 — commit.** Move sources into the L1 — make it your single source of truth. Run only after L2 has been stable and you're sure. Destructive; v1 generates manual `cp + rm` lists for you to review before anything runs.
+
+Most teams will pause at L1 indefinitely, and that's the point. L2 and L3 are there when you outgrow pointers — not steps you have to take.
 
 ## Install
-
-Clone or copy the skill folder into your `~/.claude/skills/` (user-level) or your repo's `.claude/skills/` (team-level):
 
 ```bash
 git clone https://github.com/MrFreekour/ai-skills.git
@@ -18,33 +26,32 @@ mkdir -p ~/.claude/skills/
 cp -r ai-skills/team-os-setup ~/.claude/skills/
 ```
 
-Then in Claude Code, type `/team-os-setup` or say *"set up team os"*.
+In Claude Code, type `/team-os-setup` (or say *"set up team os"*) and it auto-triggers.
 
-See [`team-os-setup/INSTALL.md`](team-os-setup/INSTALL.md) for prereqs, recovery, the L2/L3 upgrade paths, and the full extensions list (reading-order doctrine, subfolder conventions, auto-scaffolded `decisions/` + `meetings/`, etc.).
-
-## Invocation flavors
+## Run it
 
 | Use case | Invocation |
 |---|---|
-| Full chain, full questioning (recommended default) | `/team-os-setup` |
-| Personal use at a company, simplest setup (auto-applies recommended Stage 3 defaults) | `/team-os-setup --quick` |
-| Solo / personal side projects (skips team interview, audience reframe) | `/team-os-setup --variant=personal` |
+| Full chain, full questioning | `/team-os-setup` |
+| Personal use at a company, simplest setup | `/team-os-setup --quick` |
+| Solo / personal side projects | `/team-os-setup --variant=personal` |
 | Solo, fastest path | `/team-os-setup --variant=personal --quick` |
-| Already ran once; clone source files into L1 | `/team-os-setup --upgrade=L2` |
-| Already ran once; move sources into L1 (destructive) | `/team-os-setup --upgrade=L3 --confirm` |
-| Scaffold ONE deferred folder (per-folder targeted) | `/team-os-setup --deepen <folder-path>` |
+| Already ran once; clone sources into L1 | `/team-os-setup --upgrade=L2` |
+| Already ran once; move sources into L1 | `/team-os-setup --upgrade=L3 --confirm` |
 | Resume after exit | `/team-os-setup --resume` |
+
+See [`team-os-setup/INSTALL.md`](team-os-setup/INSTALL.md) for prereqs, recovery, and the full extensions list.
 
 ## Attribution
 
-The Team OS framework — hierarchical CLAUDE.md files, the NEVER list, the 80% rule, format-by-depth, the team-org/feature-index/data-catalog pattern — is Hannah Stulberg's published work in her [*In the Weeds* substack](https://intheweeds.substack.com/) and [`team-os-example-repo`](https://github.com/in-the-weeds-hannah-stulberg/team-os-example-repo). This skill is a 4-stage interview that helps you instantiate her framework for your team, with opinionated extensions (org-size routing tiers, build-on-demand defaults, reading-order doctrine, subfolder conventions, `--variant=personal`) clearly marked as such in every output.
+Built on the Team OS framework by [Hannah Stulberg](https://hannahstulberg.substack.com/) — published in her *In the Weeds* substack and the [`team-os-example-repo`](https://github.com/in-the-weeds-hannah-stulberg/team-os-example-repo). Quotes in the skill come from her published work; see [`team-os-setup/_voice.md`](team-os-setup/_voice.md) for verbatim sources.
 
-If you cite Hannah's work externally, link to her substack rather than to this skill.
+Extensions beyond Hannah's published guidance (org-size routing tiers, build-on-demand defaults, `--variant=personal`, reading-order doctrine, subfolder conventions) are clearly marked in every output. The [`team-os-setup/_principles.md`](team-os-setup/_principles.md) source-attribution table separates Hannah-canon rules from this skill's opinionated additions.
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-## Contributing
+---
 
-Issues + PRs welcome. The skill was tested on real adoption; the [`team-os-setup/_principles.md`](team-os-setup/_principles.md) source-attribution table separates Hannah-canon defaults from this skill's Extensions.
+Built by **Andrew Choflet** ([LinkedIn](https://www.linkedin.com/in/andrewchoflet/) · [GitHub](https://github.com/MrFreekour)).
