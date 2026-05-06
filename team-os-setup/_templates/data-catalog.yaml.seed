@@ -1,0 +1,27 @@
+# data-catalog.yaml — data warehouse table registry for {{company.name}}
+#
+# Every table that's queried by analytics, dashboards, or experiments gets an entry.
+# This is lookup-on-demand context — Claude reads it when asked about data, not on every query.
+#
+# Schema per table:
+#   {table_name}:
+#     database:    warehouse name
+#     schema:      schema/dataset name
+#     owner:       person responsible (slug from team-org.yaml)
+#     refresh:     hourly | daily | weekly | event-driven
+#     upstream:    where the data comes from (production source / pipeline)
+#     used_by:     [list of features/dashboards consuming this table]
+#     schema_doc:  path to schema documentation
+#     pii:         true | false  (drives access control + query templates)
+
+# Sample entry — replace with your first real table.
+
+{{first_table.name}}:
+  database: {{first_table.database}}
+  schema: public
+  owner: {{first_table.owner_slug}}
+  refresh: daily
+  upstream: {{first_table.upstream}}
+  used_by: []
+  schema_doc: product-development/analytics/schemas/{{products[0].slug}}/{{first_table.name}}.md
+  pii: false

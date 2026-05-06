@@ -1,0 +1,50 @@
+# team-org.yaml — full org directory for {{company.name}}
+#
+# This file is lookup-on-demand. Claude reads it when a name comes up in a session
+# that isn't already in the hot-path team table of the relevant CLAUDE.md.
+#
+# AT INLINE TIER (<15 ppl): this file is optional — root CLAUDE.md inlines everyone.
+# AT SPLIT TIER (15-50 ppl): full org goes here; root CLAUDE.md inlines leadership only.
+# AT POINTER-ONLY TIER (50+ ppl): full org goes here; root CLAUDE.md never inlines team data.
+#
+# Schema per person:
+#   {slug}:
+#     name:     full name
+#     role:     job title
+#     function: product | engineering | design | analytics | data-engineering | customer-success | marketing | sales | ops | other
+#     dept:     reporting dept (may match function or be broader)
+#     manager:  slug of manager (or null for top of chain)
+#     slack:    slack handle (without @)
+#     email:    work email (optional)
+#     start_date: YYYY-MM-DD (optional — useful for onboarding context)
+#     notes:    free text — anything Claude should know about how to work with this person
+#
+# Auto-add behavior: when Claude can't find a referenced person here, sessions should:
+#   1. Surface the gap: "{Name} isn't in team-org.yaml yet."
+#   2. Ask the user whether to add (capture name, role, function, dept, manager).
+#   3. If yes, append the entry in-session.
+
+# Departments — one block per dept. Add departments as needed.
+
+departments:
+{{#each departments}}
+  {{slug}}:
+    name: "{{name}}"
+    head: {{head_slug}}  # slug of dept lead
+{{/each}}
+
+# People — one entry per person, keyed by slug.
+
+people:
+{{#each daily_collaborators}}
+  {{slug}}:
+    name: "{{name}}"
+    role: "{{role}}"
+    function: {{function}}
+    dept: {{dept}}
+    manager: {{manager_slug}}
+    slack: "{{slack_handle}}"
+    notes: "[NOT YET FILLED]"
+{{/each}}
+
+# Add the rest of the org as you go. Sessions will surface gaps; populate then.

@@ -1,0 +1,35 @@
+# feature-index.yaml — cross-functional artifact map for {{company.name}}
+#
+# Each feature with cross-functional work gets one entry. Solo work doesn't need one
+# from day 1; populate as cross-functional artifacts land.
+#
+# Schema per feature:
+#   {feature-area}:
+#     {feature-slug}:
+#       prd:        path to PRD (relative to repo root)
+#       eng-plan:   path to engineering implementation plan
+#       eng-rfc:    path to engineering RFC (architecture decision)
+#       figma:      URL to design source
+#       tickets:    [list of ticket IDs in your tracker]
+#       schemas:    [paths to data schemas]
+#       queries:    [paths to analytics queries]
+#       dashboards: path to dashboard doc
+#       experiments: [paths to experiment docs]
+#       owner:      person responsible (slug from team-org.yaml)
+#       status:     proposed | in-progress | shipped | sunset
+
+# Sample entry — replace with your first real feature when you have one.
+
+{{products[0].slug}}:
+  {{first_feature.slug}}:
+    prd: product-development/product/PRDs/{{products[0].slug}}/{{first_feature.slug}}.md
+    eng-plan: product-development/engineering/plans/{{products[0].slug}}/{{first_feature.slug}}.md
+    eng-rfc: null  # add when there is one
+    figma: null
+    tickets: []
+    schemas: []
+    queries: []
+    dashboards: null
+    experiments: []
+    owner: {{first_feature.owner_slug}}
+    status: proposed
