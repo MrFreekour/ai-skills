@@ -1,0 +1,24 @@
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# Local build artifacts (in case adopters clone here for testing)
+team-os-build/
+*-team-os-v1/
+*-team-os-v2/
+*-team-os-v3/
+*-personal-os-v1/
+
+# Python (in case any helper scripts get added)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Claude Code session noise (if someone clones into a workspace)
+.claude/sessions/
