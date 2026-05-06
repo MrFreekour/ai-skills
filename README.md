@@ -16,7 +16,7 @@ Build progressively. Start safely, deepen as the structure earns your trust:
 - **L2 — copy.** Once L1 feels right, clone source files into the L1 slots so it has working copies. Originals stay where they are. The L1 becomes your AI-facing front door while the rest of your filesystem keeps working as you remember it.
 - **L3 — commit.** Move sources into the L1 — make it your single source of truth. Run only after L2 has been stable and you're sure. Destructive; v1 generates manual `cp + rm` lists for you to review before anything runs.
 
-Most teams will pause at L1 indefinitely, and that's the point. L2 and L3 are there when you outgrow pointers — not steps you have to take.
+Most teams will start at L1 as the no risk test. L2 and L3 are there when you outgrow pointers and are ready to fully commit.
 
 ## Install
 
