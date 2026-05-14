@@ -14,9 +14,26 @@ You do NOT do interview, generation, or build work — that's the sub-skills. Yo
 - `_principles.md` — Context Budget & Sub-Agent Dispatch section (you handle dispatch decisions)
 
 **You write:**
-- `<repo-root>/team-os-build/state.yaml` — initial creation
+- `<build-dir>/state.yaml` — initial creation (see Build-dir resolution below)
 - Updates to `state.yaml` after each gate (auto-commit handling)
 - Branch `team-os-setup-YYYY-MM-DD` (with auto-commits)
+
+### Build-dir resolution
+
+The skill defaults to `<repo-root>/team-os-build/` for state, audits, proposals, retros, and logs. Users who want a different location (e.g., to keep architecture docs with other planning material) can override:
+
+1. **Check for override file.** If `<repo-root>/.team-os-build-path` exists, read its first non-blank, non-comment line as a relative path (from `<repo-root>`). Use that as `<build-dir>`. Lines starting with `#` are comments.
+2. **Otherwise.** Use the default `<repo-root>/team-os-build/`.
+
+`mkdir -p <build-dir>` if missing. Subsequent reads of state.yaml, findings, proposals, retros, etc. resolve from `<build-dir>` — never assume the default path past this point. Every concrete path reference in this skill that reads `team-os-build/X` means `<build-dir>/X` once resolution has run.
+
+Override-file syntax (`.team-os-build-path`):
+```
+# Comment lines start with # — first non-comment, non-blank line is the path.
+03 Resources/Product, Brain OS/team-os-build
+```
+
+Forward slashes and unquoted spaces are supported (POSIX path semantics — `pathlib`-compatible). The path must be inside the repo's working tree (no `..` traversal); halt with a clear error if it isn't.
 
 ---
 
@@ -32,7 +49,8 @@ Branch on flags from the user's invocation:
 | `--upgrade=L2` | Skip to Stage 4 in L2 light-draft mode (wholesale — all deferred items) |
 | `--upgrade=L3 --confirm` | Skip to Stage 4 in L3 light-draft mode (wholesale — all deferred items) |
 | `--deepen <folder-path>` | Skip to Stage 9.5 below — scaffold ONE deferred item into a real work folder |
-| `--audit` | (v1.next stub — see "Audit mode design note" in `_principles.md`.) Will read an existing L1 + state.yaml, diff against current `_principles.md` doctrine, and propose upgrades for user-confirmed Stage-4-style apply. v1 ships the design note only. |
+| `--audit` | Standalone read-only audit of an existing L1 against current `_principles.md` doctrine + (optionally) a separate source environment. Outputs `team-os-build/audit-{date}.md`. No moves. Pair with `--migrate` to act on findings. |
+| `--migrate <source-path>` | Audit L1 + `<source-path>`, propose a consolidated top-level folder, then execute the merge (copy/move files, rename L1 folder, archive source, relocate `.git` if source is its own repo). Routes to Step 9.6. The L2/L3 upgrade is folded into this — you exit with a thick committed folder, not a pointer-only L1. |
 | `--resume` | Read `state.yaml: last_gate_passed`; offer resume from N+1 |
 | `--refresh-pointers` | (v1.next) Re-walk source pointers + MCP tools; update `_pointers.md` only — no folder rebuild |
 
@@ -40,24 +58,9 @@ For upgrade flags (`--upgrade=L2` / `--upgrade=L3`): skip preflight Steps 0 + 1 
 
 For `--deepen`: see Step 9.5 below.
 
-For `--audit` (v1 stub): immediately halt with this message, do NOT enter preflight:
+For `--audit`: skip Steps 0–8; route to Step 9.6 in **audit-only sub-mode** (read + report; no moves). See Step 9.6 for the audit shape.
 
-```
-Audit mode is parked for v1.next.
-
-The design is captured in `_principles.md` → "Audit mode design note (--audit, v1.next)".
-v1 ships the design intent; the implementation lands in the next release after
-the structured rule registry is added to _principles.md.
-
-For now, your options:
-  - /team-os-setup --resume        — continue your most recent build if it's not finalized
-  - /team-os-setup --deepen <path> — scaffold ONE deferred folder (per-folder targeted)
-  - /team-os-setup                  — fresh chain (a re-run that overrides will lose your existing L1)
-
-If you want to track the audit design or contribute, the design note is in `_principles.md`.
-```
-
-Exit cleanly (no state.yaml write, no branch creation). User can re-invoke with another flag.
+For `--migrate <source-path>`: skip Steps 0–8 (the chain has already run once to produce the L1); route to Step 9.6 in **full migrate sub-mode** (audit → propose → confirm → execute). The source path is required; if missing, halt with: *"Migrate needs a source path. Usage: `/team-os-setup --migrate <path-to-old-folder>`. The source can be a sibling folder, a git submodule, or a separate repo — Step 9.6 will detect which."*
 
 For `--quick` and `--variant=personal`: run the full chain but with shape modifications. Set state.yaml flags at preflight + tell each sub-skill to read those flags:
 
@@ -516,6 +519,221 @@ ONE NEXT STEP:
 ```
 
 The deepen flow is what `/enhance-context` should suggest when it finds substantial new signal in a deferred area (see F8 handoff doctrine).
+
+---
+
+## Step 9.6 — Audit + Migration mode (`--audit`, `--migrate <source-path>`)
+
+Triggered by either invocation. `--audit` runs M1 only and stops. `--migrate` runs M1 → M4. Both share the audit core — the difference is whether you act on it.
+
+The single-source-of-truth principle drives this mode: after migration, every piece of content lives in exactly one folder. The L1 you built is the canonical name; the source you migrated from becomes archive-only.
+
+### Pre-checks (both modes)
+
+1. **Active L1.** Read `state.yaml: target_l1_path`. If missing → halt: *"No prior `/team-os-setup` run detected. Run `/team-os-setup` once first to build L1, then `--migrate`."*
+2. **Source path required for `--migrate`.** Resolve to absolute path. Halt if not found.
+3. **Source ≠ L1.** Refuse if they're the same path (or one nests inside the other) — that's not a migration, it's a self-overwrite.
+4. **Source repo detection.** Run `git -C <source-path> rev-parse --show-toplevel` (silent). Capture: is source its own git repo? Is it nested inside the L1's parent repo? Save to `state.yaml: migration.source_repo_state` as one of: `own_repo` / `nested` / `not_a_repo` / `submodule`. This decides the M4 git strategy.
+5. **Working tree dirty-state — scoped check.** A flat "halt on dirty" rule wrongly halts when the parent vault repo has unrelated pending work (line-ending normalizations from an OS migration, pending feature branches, etc.). Instead:
+   - Compute the **migration scope set**: the L1 path, the source path, `<vault-root>/04 Archive/`, `<vault-root>/team-os-build/`, `<vault-root>/.gitignore`, `<vault-root>/repo-map.md`.
+   - Run `git status --porcelain` and partition modified paths into in-scope vs out-of-scope.
+   - **In-scope dirty paths → halt.** *"Migration scope has uncommitted changes at: {paths}. Commit or stash, then re-run."*
+   - **Out-of-scope dirty paths → warn only + record decision.** Present an AskUserQuestion: *"{N} files dirty outside migration scope. Proceed with scoped-stage commits (your dirty files stay untouched)?"* Options: "Proceed scoped" (Recommended) / "Pause — I'll commit/stash first" / "Cancel". Save the user's choice to `state.yaml: migration.scoped_staging = true|false`. M4.8 + M4.5b honor this by staging migration paths only (no `git add -A`).
+
+### M1 — Audit (sub-agent dispatch)
+
+Dispatch **two parallel sub-agents** (one for L1, one for source) using the Explore agent. Each agent reads `find -maxdepth 3 -type d`, surfaces top-level files with sizes, samples populated content vs empty stubs, and reports back.
+
+Synthesize the two reports into a single audit doc:
+
+```
+team-os-build/migration-audit-{YYYYMMDD}.md
+```
+
+Required sections:
+1. **L1 inventory** — folder shape, populated vs stub files, content density per area.
+2. **Source inventory** — same shape; flag which subdirs contain live artifacts (transcripts, code, trackers) vs reference-only.
+3. **Overlap matrix** — for each top-level folder in L1, name its conceptual analog in source. Mark "thicker in L1" / "thicker in source" / "unique to one side".
+4. **Hard migration questions** — places where the two sides have incompatible conventions (different file-naming, overlapping CRMs, duplicate trackers). Each gets its own subsection with options.
+5. **Recommended consolidation target** — propose a top-level folder name and reasoning (see "When to auto-recommend" below).
+
+If `--audit` only: stop here. Print the audit path. Don't proceed to M2.
+
+### M2 — Propose (consolidation target + migration manifest)
+
+The audit doc proposed a target folder name. Now make it concrete:
+
+**When to auto-recommend (skip the question):**
+- User explicitly named the target folder in their invocation (e.g., `--migrate <source> --target=<name>`)
+- One side is clearly an established, named folder (e.g., `01 Expion/`) and the other is a generic build artifact (e.g., `expion-team-os-v1/`) — the established name wins, derivation makes sense (`01 Expion - team-os`)
+- The L1 is a thin skeleton and the source is the lived-in folder — adopt the source's name with a doctrine suffix
+
+**When to AskUserQuestion:**
+- Two named folders both have content — let user pick
+- The audit's recommended name doesn't match an obvious convention in the vault
+- Multiple plausible top-level folders exist (e.g., vault has both `01 Expion/` and `Expion/`)
+
+The proposal must include:
+1. **Target folder name** — final string, no placeholders.
+2. **Archive destination** — where the source goes after migration. Default: `<vault-root>/04 Archive/<source-basename> (archived-{YYYYMMDD})/`. If `04 Archive/` doesn't exist, the proposal must mkdir it.
+3. **Manifest** — a table of EVERY source path → target path. Categories:
+   - **Copy** — content that lands in the L1 (the most common bucket).
+   - **Skip** — source paths that DON'T migrate (live trackers stay in source; or already represented in L1).
+   - **Already in L1** — paths that exist in both; the L1 version wins.
+   - **Hard question** — paths flagged in audit; default to "skip" unless user explicitly resolves.
+4. **`.git` relocation plan** — if `migration.source_repo_state == "own_repo"`:
+   - The `.git` directory moves from source to target.
+   - The archived copy of source has `.git` REMOVED (so it doesn't masquerade as an active repo).
+   - The remote-tracking branch in the new location stays untouched; the first commit after migration captures the reorganization.
+   If `migration.source_repo_state == "nested"`: do nothing to `.git` — the parent repo already tracks everything; the migration is a `git mv` operation.
+
+Save to `team-os-build/migration-proposal-{YYYYMMDD}.md`. AskUserQuestion: *"Authorize execute? Preview is at {path}."* — with options "Yes, execute", "Edit the manifest first", "Cancel".
+
+### M3 — Confirm (preview, AskUserQuestion gate)
+
+The M3 gate is for **routing decisions** (target folder name, archive location, gitignore strategy). It is NOT for file-by-file content comparison — those questions go to the reconciliation gate at M4.10. When you're about to ask the user "which version of file X should win?", recognize that as a content-comparison question and route it to reconciliation instead, with an M3 option "defer file-by-file conflict resolution to reconciliation pass."
+
+Before any file operation, print a stripped-down preview directly in chat (not just in the doc):
+
+```
+Migration plan summary:
+
+  TARGET:     {target_path}
+  ARCHIVE:    {archive_path}
+  REPO STATE: {source_repo_state}
+  
+  Files: copy {N}, skip {M}, hard-questions deferred {K}
+  Folder rename: {old_l1_path} → {target_path}
+  Source archive: {source_path} → {archive_path}
+  .git plan: {plan_description}
+  
+  Recovery: a pre-migration tag will be written at {tag_name}. Roll back with `git reset --hard {tag_name}`.
+```
+
+AskUserQuestion: *"Execute now?"* — with options "Yes — execute", "Show me the full manifest", "Cancel".
+
+### M4 — Execute (safe migration)
+
+Execute in this exact order. Halt on any failure.
+
+1. **Pre-migration tag.** `git tag -a "pre-migrate-{YYYYMMDD-HHMM}" -m "snapshot before /team-os-setup --migrate"`. Save tag name to state.yaml.
+2. **Archive source first (safety copy).** `cp -R <source> <archive_path>`. Verify destination exists + non-empty. **Then** delete `.git/` from the archive copy if `source_repo_state == "own_repo"` (it would otherwise be a stale fossil).
+3. **Copy source content into L1** per the manifest. Use `cp -R` for each entry, preserving relative paths. Log each copy to `team-os-build/migration-log-{YYYYMMDD}.md`.
+4. **If `source_repo_state == "own_repo"`:** move `.git` from the source path to the L1 path:
+   ```bash
+   mv "<source>/.git" "<l1_path>/.git"
+   ```
+   After this, the L1 path IS the repo. The source path is no longer a repo.
+5. **Remove the source path** (it's now just a duplicate of the archive). `rm -rf <source>` — but only after verifying the archive copy exists and is non-empty (Step 2).
+6. **Rename L1 folder.** `mv "<l1_path>" "<target_path>"`. If `source_repo_state == "own_repo"`, the `.git` moves with it — the repo is now at `<target_path>`.
+7. **Verify.** Run `git -C <target_path> status` — confirm the repo loads. The working tree will show massive renames/deletes because the index reflects the old shape; that's expected.
+8. **Commit the reorganization.** Inside the new target folder:
+   ```bash
+   git add -A
+   git commit -m "team-os: migrate to L2/L3 at {target_path} — content from {source_basename} merged; old layout archived at {archive_path}"
+   ```
+9. **Update parent state.yaml.** Set `state.yaml: target_l1_path = <target_path>` (in the *parent* repo's team-os-build), and append a migration record to `state.yaml: migration.history[]` with the source path, target path, archive path, timestamp, and the pre-migration tag.
+
+### M4.5b — Parent-repo housekeeping (conditional)
+
+This sub-step runs when the L1 lived inside a parent repo (the `team-os-build/state.yaml` is in a different git repo than the L1 itself — true when the L1 is a sibling folder under a vault repo like brain-os). It's a no-op when the L1 IS the parent (its own top-level repo).
+
+Detect: `git -C <parent-of-l1> rev-parse --show-toplevel` ≠ the L1 path → parent-repo housekeeping required.
+
+Inside the parent repo:
+1. **Add target to parent `.gitignore`.** The new target folder is a nested repo now (it has the source's `.git` inside). Without gitignoring, the parent tries to track it. Append:
+   ```
+   # === Migrated team-os nested repo ===
+   <target_basename>/
+   ```
+   If `<archive_path>` is INSIDE the parent's working tree (typical: `04 Archive/...`), also add an archive gitignore if not already present.
+2. **Stage the L1 deletion.** The parent's index still has the L1 paths tracked. `git -C <parent> add <l1_basename>` will pick up the deletes (and any pre-existing L1 content that the migration removed).
+3. **Update `repo-map.md`** if it exists in the parent. Replace `<l1_basename>` and `<source_basename>` references with `<target_basename>`; add a "Migration note" section dated to the migration. (Skip if no repo-map.md exists.)
+4. **Stage ONLY migration-scoped paths.** Critical: the parent repo may have pre-existing dirty files unrelated to the migration. Explicitly stage:
+   - `.gitignore` (your additions)
+   - `<l1_basename>` (the deletions)
+   - `repo-map.md` (if updated)
+   - `team-os-build/migration-{audit,proposal,reconciliation}-<date>.md` + `migration-logs-<date>/`
+   Do NOT use `git add -A` or `git add .` — that rolls in unrelated pre-existing dirty files.
+5. **Commit the parent.** Use a separate commit from the inside-repo migration commit. Message: `brain-os: migrate <l1> -> <target> (L<level> consolidation)` (or equivalent — match the parent's naming convention).
+
+Failure-mode note: if any of steps 1–5 has a transient cloud-sync error (`.git/logs/HEAD: No such file or directory`, `.git/index.lock: File exists`), retry the failed git op once with 2 second backoff. Persistent failure: halt + log.
+
+### M4.10 — Reconciliation gate (sub-agent)
+
+After M4.9, before M5, dispatch a sub-agent (Explore type) to do a read-only comparison pass. The agent reads:
+
+- The active target folder `<target_path>`
+- The archive copy `<archive_path>`
+
+And produces `team-os-build/migration-reconciliation-<date>.md` covering:
+
+1. **Skipped-file elevation check.** For each file in the M2 manifest's SKIP bucket: open it in archive, compare to any active equivalent. Report one of: "keep skipped", "pull section X into active file Y", or "resurrect at path Z". One sentence per skipped file is enough when the answer is "keep skipped."
+2. **Unexpected duplicate audit.** Walk the active target for files that look like duplicates by name. Some duplicates are intentional (pointer stubs deferring to canonical sources; archive/ folders holding historical versions). Distinguish intentional vs unintentional. Report only the unintentional ones with a recommendation.
+3. **Hooks / hardcoded path audit.** Grep the active `.claude/` for any literal references to the old folder name (the L1's pre-rename name OR the source's old name). Report `file:line` for each match. Don't fix; enumerate so the user can fix.
+
+The reconciliation agent's report is read-only — surface to user, don't apply edits. M5 closer references the report path.
+
+### M5 — Closer
+
+```
+✓ Migrated: {old_l1_path} (+ {source_path}) → {target_path}
+  - {N} files copied from source
+  - Source archived at {archive_path}
+  - {repo_state_description}
+  - Pre-migration tag: {tag_name}
+  - Reconciliation report: team-os-build/migration-reconciliation-{date}.md
+    (skipped-file elevation review, duplicate audit, hardcoded-path audit)
+
+ONE NEXT STEP:
+  Open {target_path} in your IDE and ask Claude:
+    "What changed in the latest commit?"
+  Claude should walk the migration commit and the new layout. If the response cites the right paths, the migration worked.
+
+Recovery (if anything looks wrong):
+  cd {target_path}
+  git reset --hard {tag_name}    # rolls the repo back
+  rm -rf {target_path}/<copied-paths>  # then delete the copied content
+  cp -R {archive_path} {source_path}    # restore source from archive
+  
+  The pre-migration tag is your insurance — keep it until you're sure the new layout works.
+```
+
+### Migration-specific hard rules
+
+- **NEVER** delete source before the archive copy is verified non-empty.
+- **NEVER** move `.git` before content is copied. Lose the order, lose the repo.
+- **NEVER** auto-execute migration without explicit AskUserQuestion gate (M3). Single source of truth is destructive by definition.
+- **ALWAYS** write the pre-migration tag before any move. The user must have a one-line rollback.
+- **ALWAYS** remove `.git/` from the archive copy when source was its own repo. Two-repos-same-remote is a confusion bomb.
+- **ALWAYS** scope-stage the migration commits when `migration.scoped_staging = true` (see M0 check 5). Use explicit `git add <path>` calls; never `git add -A` or `git add .` at the parent-vault level — that captures pre-existing dirty files unrelated to the migration.
+
+### Commit retry contract (cloud-sync filesystems)
+
+On cloud-synced filesystems (Egnyte, Dropbox, OneDrive Files-on-Demand, network shares), git operations sometimes hit transient errors that look like real failures but resolve on retry: `index.lock: File exists` (stale lock from a concurrent read-only op), `.git/logs/HEAD: No such file or directory` (sync hiccup mid-write). Treat any commit op in M4.7, M4.8, M4.5b as retry-capable:
+
+```
+For each commit op (M4.7, M4.8, M4.5b):
+  attempt = 1
+  while attempt <= 3:
+    run `git commit -m "..."`
+    if exit == 0: break
+    if stderr matches one of:
+      - "index.lock: File exists"
+      - "logs/HEAD: No such file or directory"
+      - "logs/refs/heads/.*: No such file or directory"
+      - "unable to append to .git/"
+    then:
+      rm -f .git/index.lock        # only if "index.lock" error
+      sleep 2
+      attempt += 1
+      log "commit retry {attempt}/3 (transient FS error: {error}) → team-os-build/migration-log"
+      continue
+    else:
+      halt with the error verbatim
+```
+
+Persistent failure after 3 retries: halt and surface to user. Log every retry to `team-os-build/migration-log-{date}.md` so the user knows what happened (and that it's a filesystem issue, not a logic bug).
 
 ---
 

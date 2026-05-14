@@ -306,31 +306,85 @@ The trigger question for any folder: *"Does the user have ≥3 artifacts of this
 
 ---
 
-## Audit mode design note (`--audit`, v1.next)
+## Audit + Migration doctrine (`--audit`, `--migrate`)
 
-The `--audit` invocation mode is stubbed in v1's invocation table but not implemented. This section captures the design so the v1.next session can pick it up cleanly.
+Both modes share the same audit core (the inventory + diff pass). `--audit` stops there; `--migrate` continues into propose + execute. The doctrine below covers both. The orchestrator-level steps live in SKILL.md → "Step 9.6 — Audit + Migration mode".
 
-**Use case:** A user has an existing Team OS L1 (built by this skill or hand-built Hannah-style). The skill, the doctrine, or both have evolved since their L1 was created. They want to know: *what's drifted from current best-practice, and what should I upgrade?*
+### Single source of truth (load-bearing rule)
 
-**Proposed shape:**
+After a migration, every piece of content lives in EXACTLY ONE folder. No mirroring, no symlinks to both, no "the real one is over here but I copied it over there too." The whole point of consolidation is to free Claude (and the user) from having to choose which copy to read.
 
-1. Invocation: `/team-os-setup --audit` (operates on the L1 referenced in `state.yaml: target_l1_path`, or asks if missing).
-2. **Stage A — Inventory pass (sub-agent dispatch).** Walk the existing L1 with Glob + Read. Capture: folder shape, CLAUDE.md presence per level, presence of `_glossary.md` / `feature-index.yaml` / `team-org.yaml` / `data-catalog.yaml`, presence of "Reading order for Claude" section in root CLAUDE.md, presence of "PMOS output routing" + "Subfolder conventions" tables, per-work-folder `decisions/` + `meetings/` + `_index.md` presence, `state.yaml: deferred_items[]` shape.
-3. **Stage B — Diff against `_principles.md`.** Compute per-doctrine compliance: for each doctrine section in `_principles.md`, check what the L1 has vs. what the current default would scaffold. Output a 3-column table (doctrine | L1 has | gap).
-4. **Stage C — Upgrade proposal.** Group gaps into upgrade bundles:
-   - **Cosmetic** — missing reading-order section, missing subfolder-convention table → safe text-only edits.
-   - **Structural** — missing `decisions/` / `meetings/` per work folder → mkdir + index files; non-destructive.
-   - **Schema** — missing `deferred_items[]` in state.yaml; needs population from `_backlog.md` if present.
-   - **Doctrine drift** — naming convention mismatch, build-on-demand folders that should now be scaffolded → ask user before changing.
-5. **Stage D — Confirm + apply.** AskUserQuestion (multi-select) over the upgrade bundles. User picks subset; the skill dispatches Stage 4 in audit-mode, which applies only the selected bundles. Auto-commit per bundle.
-6. **Output:** `team-os-build/audit-{date}.md` with the inventory, diff, and what was applied vs. skipped.
+This is what makes migration destructive: the source folder is moved to archive after a verified copy. Archive is a safety net for rollback, not a working location. **Folders in `04 Archive/` are explicitly NOT loaded as context** — every root CLAUDE.md should include this rule.
 
-**Key design constraints:**
-- Audit mode is **always non-destructive in v1.next** — it adds, never removes. Removal stays a manual user choice.
-- Cosmetic + structural bundles default to "apply" (Recommended); doctrine-drift bundles default to "skip" pending user judgment.
-- The diff respects user-customized state. If a user explicitly opted out of `team-org.yaml` at inline tier, audit doesn't re-add it.
+### When migration is needed (vs. a fresh L1 or a `--deepen`)
 
-**Why deferred to v1.next:** the inventory pass is reusable (good). The doctrine diff is the load-bearing-and-fragile piece — it needs `_principles.md` to expose its rules in a structured way (currently they're prose sections). Before audit-mode ships, `_principles.md` needs a structured rule registry (e.g., a YAML appendix with rule-ids that the diff can compare against). That's the v1.next pre-work.
+Migration is the right mode when:
+- A folder existed before `/team-os-setup` ran (e.g., a Hannah-style PMOS instance, a hand-built knowledge folder, an old "01 Company" structure)
+- The L1 built by the skill is mostly empty (pointer-only), and the user wants the real content TO LIVE in the L1 instead of being referenced from outside
+- The user wants ONE canonical company folder for both context and project tracking, with the old folder safely archived
+
+Migration is NOT the right mode when:
+- The L1 is the canonical home and the source is a different concern (e.g., side project, personal notes) — keep them separate
+- The source folder has artifacts you want to keep ACTIVELY referencing (transcripts, live code, datasets) — consider `--upgrade=L2` instead, which copies without archiving the source
+- The user hasn't built an L1 yet — run `/team-os-setup` fresh first
+
+### Audit pass (M1) — what to measure
+
+The audit is a parallel-read pass: one sub-agent reads the L1, one reads the source. They report to the orchestrator, which synthesizes. Each agent captures the same things:
+
+1. **Folder shape** — tree to depth 3, surfacing the architecture.
+2. **Top-level files** — name, size, first ~80 chars of content (signals stub vs populated).
+3. **Content density per area** — for each top-level folder: is it populated, stub, or empty? File count + total size.
+4. **Live artifacts** — transcripts, code, trackers (`checkins.md`, `open-questions-log.md`, `stakeholder-tracker.md`), populated YAMLs. These are the things that matter to preserve.
+5. **Convention markers** — does this folder have CLAUDE.md? `_index.md` files in `decisions/`/`meetings/`? Reading-order section? Routing tables?
+
+The synthesis produces the **overlap matrix**: every top-level folder in L1 mapped to its conceptual analog in source, marked "thicker in A / thicker in B / unique." This is the load-bearing artifact — it makes the migration manifest writable.
+
+### Consolidation target — naming heuristics
+
+The target folder is the consolidated home. Its name follows these heuristics, in priority order:
+
+1. **User-specified.** If the invocation included `--target=<name>`, use it.
+2. **Established named folder wins.** If one side has an existing convention-named folder (e.g., `01 Expion/`) and the other is a generic build artifact (e.g., `expion-team-os-v1/`), use the established name with a doctrine suffix (e.g., `01 Expion - team-os/`). This preserves muscle memory + lineage.
+3. **Lived-in folder wins.** If one side has live trackers + populated content and the other is a skeleton, adopt the live folder's name.
+4. **Ask the user.** Two named folders both populated? Two plausible vault conventions? Surface the AskUserQuestion with both options.
+
+The doctrine suffix (e.g., `- team-os`, `- pmos`, `- ops`) signals "this folder follows that doctrine" — useful when vault has multiple companies/teams each with their own OS.
+
+### Archive doctrine — what archive is for
+
+`04 Archive/` is the rollback-safety folder. Contents:
+- A full copy of every migrated source folder, named `<basename> (archived-{YYYYMMDD})/`
+- The `.git/` directory is REMOVED from archived copies if the source was its own repo (single source of truth for the repo itself)
+- The archive is NEVER read by Claude as context — the root CLAUDE.md must declare this
+
+Archive contents stay until the user decides they're safe to delete. The skill doesn't auto-prune.
+
+### `.git` relocation strategy
+
+Migration's trickiest piece: if the source folder is its own git repo (e.g., the source's `.git/` directory lives directly inside it, not in a parent), the repo identity must follow the canonical folder. Strategy:
+
+- **Detection** (M0 pre-check): `git -C <source> rev-parse --show-toplevel` returns the source path itself → it's `own_repo`. Returns a parent path → it's `nested`. Fails → `not_a_repo`.
+- **`own_repo` strategy:**
+  1. Copy source content into L1 first (don't touch `.git` yet).
+  2. Verify the archive copy of source is complete.
+  3. Move `.git/` from source → L1 (atomic `mv`).
+  4. Delete the now-`.git`-less source folder (its content lives in archive + L1).
+  5. Rename L1 to target. The `.git` rides along.
+  6. `git status` inside target now shows the working tree differs from the index (because the layout changed). Commit captures the reorganization.
+- **`nested` strategy:** the source is already tracked by a parent repo. Use `git mv` for in-tree moves; no `.git` relocation needed. The reorganization commit happens in the parent repo.
+- **`not_a_repo` strategy:** simplest case. Just copy, archive, rename, init the new repo if desired.
+- **`submodule` strategy:** halt + ask the user. Submodule migration is not yet supported in v1.
+
+### Why migration is its own mode (not just `--upgrade=L2`)
+
+`--upgrade=L2/L3` copies/moves source files INTO an existing L1 in place. It does NOT:
+- Rename the L1 folder
+- Archive the source folder
+- Handle `.git` relocation
+- Produce a single-source-of-truth outcome (after `--upgrade`, both L1 and source still exist)
+
+Migration is the superset that gets you to one canonical folder. Use `--upgrade` when you want both folders to coexist; use `--migrate` when you want consolidation.
 
 ---
 
