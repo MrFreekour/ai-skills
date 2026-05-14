@@ -177,6 +177,50 @@ On "manage myself": save `state.yaml: sparse_checkout.cone_mode = true` and `spa
 
 If sparse-checkout is NOT enabled: save `state.yaml: sparse_checkout.cone_mode = false` and continue.
 
+### Check 0.6 — Cloud-sync mount detection
+
+Cloud-sync filesystems (Egnyte, Dropbox, OneDrive, Google Drive, iCloud) have been observed to **actively delete `.git/` files mid-operation** — losing local commits even after they've been successfully written. The commit retry contract in Step 9.6 handles transient errors; it does NOT handle wholesale `.git/` deletion. This check halts before any work starts.
+
+Resolve `$(git rev-parse --show-toplevel)` and pattern-match the absolute path against:
+
+| Pattern | Cloud-sync provider |
+|---|---|
+| `/Volumes/*Egnyte*` or contains `EgnyteDriveFS` mount | Egnyte |
+| `~/Dropbox/` or starts with `/Users/*/Dropbox/` | Dropbox |
+| `~/OneDrive*/` or contains `OneDrive -` | OneDrive |
+| `~/Google Drive/`, `/Volumes/GoogleDrive*/` | Google Drive |
+| `~/Library/Mobile Documents/`, `~/iCloudDrive/`, `~/iCloud Drive*/` | iCloud |
+
+On match, halt with:
+
+```
+Cloud-sync filesystem detected at {repo-path}.
+
+These mounts have been observed to delete .git/ files mid-operation —
+losing local commits even after successful write. Real incidents:
+  - Egnyte deleted .git/ from two repos mid-rebase (2026-05-14)
+  - Both repos required full off-mount recovery (clone fresh from
+    GitHub, re-apply changes, push)
+
+Recommendation: operate on a local-disk clone instead.
+  mkdir -p ~/dev && cd ~/dev
+  git clone <your-remote> .
+  /team-os-setup    # re-run here
+
+Override (you've been warned):
+  /team-os-setup --on-cloud-sync-mount-ack
+
+  Override mode runs but:
+  - Prompts to push immediately after every gate's auto-commit
+    instead of relying on local state surviving until Gate 4
+  - Records the override in state.yaml.cloud_sync_override
+  - Warns again in M5 closer with explicit "push NOW" language
+```
+
+On `--on-cloud-sync-mount-ack`: save `state.yaml: cloud_sync_override = {provider: "egnyte"|..., ack_at: <iso>}` and continue. Each subsequent auto-commit (Gates 1–4 + M4.7/M4.8/M4.5b) is followed by an inline `git push origin HEAD` attempt (with user confirmation if no remote credentials are configured).
+
+If no cloud-sync match: save `state.yaml: cloud_sync_override = null` and continue.
+
 ---
 
 ## Step 1 — Preflight: Git checks
@@ -581,6 +625,12 @@ The proposal must include:
    - **Skip** — source paths that DON'T migrate (live trackers stay in source; or already represented in L1).
    - **Already in L1** — paths that exist in both; the L1 version wins.
    - **Hard question** — paths flagged in audit; default to "skip" unless user explicitly resolves.
+
+   **Routing-rule refinement (load-bearing for product-aware migrations).** Before finalizing destinations in the **Copy** bucket, read the target's root `CLAUDE.md` if it exists and look for a "PMOS output routing table" section (or equivalent — the doctrine in `_principles.md` formalizes this format). For each source file proposed to land at a generic per-category destination (e.g., `analytics/specs/`), check the file's content and filename for product/work-scope keywords. If the keywords match a routing-rule's work-scope, refine the destination to the product-specific path (e.g., `analytics/helpscript/specs/` for a HelpScript dashboard spec).
+
+   Surface refinements in a dedicated proposal sub-section "Routing-rule refinements applied," so the user sees exactly what M2 did beyond the source's original placement. If keyword matching is ambiguous (matches multiple work-scopes, or none), fall back to the generic per-category destination and flag the file for M4.10 routing audit.
+
+   *Example that motivates this rule.* A 2026-05-12 migration originally proposed `dash-spec-test-net-revenue-vs-budget-*.md` at `reporting/analytics/specs/` (generic bucket from source layout). The target's CLAUDE.md routing table mapped HelpScript Reporting → `reporting/analytics/helpscript/`, so the doctrine-correct destination was `reporting/analytics/helpscript/specs/`. The misplacement wasn't caught until a manual post-M4.10 audit. Routing-rule refinement at M2 catches this proactively.
 4. **`.git` relocation plan** — if `migration.source_repo_state == "own_repo"`:
    - The `.git` directory moves from source to target.
    - The archived copy of source has `.git` REMOVED (so it doesn't masquerade as an active repo).
@@ -671,6 +721,7 @@ And produces `team-os-build/migration-reconciliation-<date>.md` covering:
 1. **Skipped-file elevation check.** For each file in the M2 manifest's SKIP bucket: open it in archive, compare to any active equivalent. Report one of: "keep skipped", "pull section X into active file Y", or "resurrect at path Z". One sentence per skipped file is enough when the answer is "keep skipped."
 2. **Unexpected duplicate audit.** Walk the active target for files that look like duplicates by name. Some duplicates are intentional (pointer stubs deferring to canonical sources; archive/ folders holding historical versions). Distinguish intentional vs unintentional. Report only the unintentional ones with a recommendation.
 3. **Hooks / hardcoded path audit.** Grep the active `.claude/` for any literal references to the old folder name (the L1's pre-rename name OR the source's old name). Report `file:line` for each match. Don't fix; enumerate so the user can fix.
+4. **Routing audit (defense-in-depth for M2's routing-rule refinement).** Read the target's root `CLAUDE.md` and re-parse its routing table. For each file in the migration's COPY bucket, verify the destination is the most-specific match for the file's product/work-scope keywords. Flag any "wrong granularity" placements (e.g., a HelpScript-keyed file at `analytics/specs/` when `analytics/helpscript/specs/` is the routing-table match). For each flag, propose the corrected path. Don't auto-move; the user reviews + decides — this is reconciliation, not enforcement.
 
 The reconciliation agent's report is read-only — surface to user, don't apply edits. M5 closer references the report path.
 
@@ -682,8 +733,22 @@ The reconciliation agent's report is read-only — surface to user, don't apply 
   - Source archived at {archive_path}
   - {repo_state_description}
   - Pre-migration tag: {tag_name}
-  - Reconciliation report: team-os-build/migration-reconciliation-{date}.md
-    (skipped-file elevation review, duplicate audit, hardcoded-path audit)
+  - Reconciliation report: <build-dir>/migration-reconciliation-{date}.md
+    (skipped-file elevation review, duplicate audit, hardcoded-path
+    audit, routing audit)
+
+═══ Durability — push NOW if you're on a cloud-sync mount or flaky FS ═══
+  cd {target_path} && git push -u origin main
+  cd {parent_repo_root} && git push -u origin {branch_name}
+
+  Why now, not later: local-only commits can be lost to cloud-sync
+  conflicts, filesystem corruption, or accidental deletion. Pushing to
+  GitHub anchors the history before anything else can go wrong. The
+  M0 cloud-sync detection halts before this becomes a problem; if you
+  reached this point on a flagged mount via --on-cloud-sync-mount-ack,
+  push is non-negotiable.
+  
+  Skip this line if you've already pushed.
 
 ONE NEXT STEP:
   Open {target_path} in your IDE and ask Claude:
@@ -755,10 +820,18 @@ ONE NEXT STEP:
   
   This is the beginner's-mindset prompt — don't just trust scaffolding you didn't build; ask Claude to teach you the reasoning so you can iterate.
 
-When you're ready to share with the team:
+═══ Durability — push NOW if you're on a cloud-sync mount or flaky FS ═══
   cd {{repo-root}}
   git log {{branch_name}}                # review the commits
   git push -u origin {{branch_name}}     # push (manual — never automatic)
+
+  Why now, not later: local-only commits can be lost to cloud-sync
+  conflicts (Egnyte, Dropbox, OneDrive, iCloud), filesystem corruption,
+  or accidental deletion. Pushing to GitHub anchors the history before
+  anything else can go wrong. If your repo was flagged at M0 Check 0.6
+  via --on-cloud-sync-mount-ack, push is non-negotiable.
+  
+  Skip this section if you've already pushed.
   
 Want more?
   /team-os-setup --upgrade=L2     Generates manual `cp` commands to clone source files into L1 slots.
